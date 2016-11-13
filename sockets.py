@@ -1,18 +1,18 @@
-#!/usr/bin/env python
-# coding: utf-8
-# Copyright (c) 2013-2014 Abram Hindle
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-#
+# #!/usr/bin/env python
+# # coding: utf-8
+# # Copyright (c) 2013-2014 Abram Hindle, Alice Wu
+# # Licensed under the Apache License, Version 2.0 (the "License");
+# # you may not use this file except in compliance with the License.
+# # You may obtain a copy of the License at
+# #
+# # http://www.apache.org/licenses/LICENSE-2.0
+# #
+# # Unless required by applicable law or agreed to in writing, software
+# # distributed under the License is distributed on an "AS IS" BASIS,
+# # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# # See the License for the specific language governing permissions and
+# # limitations under the License.
+# #
 import flask
 from flask import Flask, request
 from flask_sockets import Sockets
@@ -28,63 +28,141 @@ app.debug = True
 
 class World:
     def __init__(self):
-        self.clear()
+        self.space = dict()
         # we've got listeners now!
-        self.listeners = list()
-        
+        self.set_listeners = list()
+        self.clear_listeners = list()
+
     def add_set_listener(self, listener):
-        self.listeners.append( listener )
+        self.set_listeners.append( listener )
+
+    def add_clear_listener(self, listener):
+        self.clear_listeners.append(listener)
 
     def update(self, entity, key, value):
         entry = self.space.get(entity,dict())
         entry[key] = value
         self.space[entity] = entry
-        self.update_listeners( entity )
+        self.update_set_listeners( entity )
 
     def set(self, entity, data):
         self.space[entity] = data
-        self.update_listeners( entity )
-
-    def update_listeners(self, entity):
-        '''update the set listeners'''
-        for listener in self.listeners:
-            listener(entity, self.get(entity))
+        self.update_set_listeners( entity )
 
     def clear(self):
         self.space = dict()
+        self.update_clear_listeners()
 
     def get(self, entity):
         return self.space.get(entity,dict())
-    
+
     def world(self):
         return self.space
 
-myWorld = World()        
+    def update_set_listeners(self, entity):
+        '''update the set listeners'''
+        for listener in self.set_listeners:
+            listener(entity, self.get(entity))
+
+    def update_clear_listeners(self):
+        '''update the clear listeners'''
+        for listener in self.clear_listeners:
+            listener()
+
+myWorld = World()
+
+# https://github.com/abramhindle/WebSocketsExamples
+class Client:
+    def __init__(self):
+        self.queue = queue.Queue()
+
+    def put(self, v):
+        self.queue.put_nowait(v)
+
+    def get(self):
+        return self.queue.get()
+
+clients = list()
 
 def set_listener( entity, data ):
-    ''' do something with the update ! '''
+    # For each client, put the entity and its data in the queue
+    for client in clients:
+        client.put(json.dumps({entity: data}))
+
+def clear_listener():
+    # For each client, put the empty world in the queue
+    for client in clients:
+        client.put(json.dumps(myWorld.world()))
 
 myWorld.add_set_listener( set_listener )
-        
+myWorld.add_clear_listener( clear_listener )
+
 @app.route('/')
 def hello():
-    '''Return something coherent here.. perhaps redirect to /static/index.html '''
-    return None
+    return app.send_static_file('index.html')
 
+@app.route('/json2.js')
+def json2():
+    return app.send_static_file('json2.js')
+
+@app.errorhandler(405)
+def method_not_allowed(error):
+    return 'Method not allowed', 405
+
+@app.errorhandler(404)
+def page_not_found(error):
+    return 'This page does not exist', 404
+
+# https://github.com/abramhindle/WebSocketsExamples
 def read_ws(ws,client):
     '''A greenlet function that reads from the websocket and updates the world'''
-    # XXX: TODO IMPLEMENT ME
+    try:
+        while True:
+            msg = ws.receive()
+            # print "WS RECV: %s" % msg
+            if (msg is not None):
+                packet = json.loads(msg)
+                # print "Packet: %s" % packet
+                for name, data in packet.iteritems():
+                    entity = myWorld.get(name)
+                    for i, j in data.iteritems():
+                        entity[i] = j
+                    myWorld.set(name, entity)
+            else:
+                break
+    except:
+        pass
+
     return None
 
+
+#https://github.com/abramhindle/WebSocketsExamples
 @sockets.route('/subscribe')
 def subscribe_socket(ws):
     '''Fufill the websocket URL of /subscribe, every update notify the
        websocket and read updates from the websocket '''
-    # XXX: TODO IMPLEMENT ME
-    return None
+    # print "A client has subscribed."
+    client = Client()
+    clients.append(client)
+
+    # Give the new client the current world data
+    client.put(json.dumps(myWorld.world()));
+
+    g = gevent.spawn( read_ws, ws, client )
+    try:
+        while True:
+            # Block here until we get something from the client's queue
+            msg = client.get()
+            # print "Got a message:\n%s" % msg
+            ws.send(msg)
+    except Exception as e:# WebSocketError as e:
+        print "WS Error: %s" % e
+    finally:
+        clients.remove(client)
+        gevent.kill(g)
 
 
-def flask_post_json():
+def flask_post_json(request):
     '''Ah the joys of frameworks! They do so much work for you
        that they get in the way of sane operation!'''
     if (request.json != None):
@@ -94,27 +172,34 @@ def flask_post_json():
     else:
         return json.loads(request.form.keys()[0])
 
+
 @app.route("/entity/<entity>", methods=['POST','PUT'])
 def update(entity):
     '''update the entities via this interface'''
-    return None
+    data = flask_post_json(request)
 
-@app.route("/world", methods=['POST','GET'])    
+    for key, value in data.iteritems():
+        myWorld.update(entity, key, value);
+
+    return flask.jsonify(myWorld.get(entity))
+
+
+@app.route("/world", methods=['POST','GET'])
 def world():
-    '''you should probably return the world here'''
-    return None
+    '''Return the world as JSON'''
+    return flask.jsonify(myWorld.world())
 
-@app.route("/entity/<entity>")    
+@app.route("/entity/<entity>")
 def get_entity(entity):
     '''This is the GET version of the entity interface, return a representation of the entity'''
-    return None
+    return flask.jsonify(myWorld.get(entity))
 
 
 @app.route("/clear", methods=['POST','GET'])
 def clear():
-    '''Clear the world out!'''
-    return None
+    myWorld.clear()
 
+    return flask.jsonify(myWorld.world())
 
 
 if __name__ == "__main__":

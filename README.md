@@ -57,3 +57,10 @@ Contributors
 
 * Mark Galloway
 * Abram Hindle
+* Alice Wu
+
+Acknowledgement
+===============
+* https://raw.githubusercontent.com/ajyong/CMPUT404-assignment-websockets/master/static/index.html
+* https://github.com/abramhindle/WebSocketsExamples/blob/master/chat.py
+* https://github.com/UliceNix/CMPUT404-assignment-ajax/blob/master/static/index.html
