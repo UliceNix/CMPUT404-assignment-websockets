@@ -14,7 +14,7 @@
 # # limitations under the License.
 # #
 import flask
-from flask import Flask, request
+from flask import Flask, request, redirect, url_for
 from flask_sockets import Sockets
 import gevent
 from gevent import queue
@@ -99,11 +99,7 @@ myWorld.add_clear_listener( clear_listener )
 
 @app.route('/')
 def hello():
-    return app.send_static_file('index.html')
-
-@app.route('/json2.js')
-def json2():
-    return app.send_static_file('json2.js')
+    return redirect(url_for('static', filename='index.html'))
 
 @app.errorhandler(405)
 def method_not_allowed(error):
